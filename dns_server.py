@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 # Network prefix translation (optional)
 # Translate IP addresses from SOURCE_PREFIX to DEST_PREFIX in DNS responses
-# Example: SOURCE_PREFIX=192.168.0 DEST_PREFIX=192.168.67 translates 192.168.0.x to 192.168.67.x
+# Example: SOURCE_PREFIX=192.168.0 DEST_PREFIX=192.168.69 translates 192.168.0.x to 192.168.69.x
 SOURCE_PREFIX = os.getenv("SOURCE_PREFIX", "")
 DEST_PREFIX = os.getenv("DEST_PREFIX", "")
 
