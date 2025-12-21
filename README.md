@@ -33,7 +33,7 @@ Run with ports mapped for both UDP and TCP DNS (port 53):
 
 ```bash
 docker run -d \
-  -e HA_TOKEN="your_home_assistant_long_lived_token" \
+  -e HASS_TOKEN="your_home_assistant_long_lived_token" \
   -e HA_URL="ws://homeassistant:8123/api/websocket" \
   -p 53:53/udp -p 53:53/tcp \
   --name hass-dns-server \
@@ -41,16 +41,16 @@ docker run -d \
 ```
 
 Notes:
-- `HA_TOKEN` is required. The container will exit if this is not provided.
+- `HASS_TOKEN` is required. The container will exit if this is not provided.
 - To avoid port mapping issues on some systems, you can run with host networking:
 
 ```bash
-docker run -d --network host -e HA_TOKEN="..." --name hass-dns-server hass-dns-server:latest
+docker run -d --network host -e HASS_TOKEN="..." --name hass-dns-server hass-dns-server:latest
 ```
 
 ## Environment variables
 
-- `HA_TOKEN` (required): Home Assistant long-lived access token.
+- `HASS_TOKEN` (required): Home Assistant long-lived access token.
 - `HA_URL` (optional): WebSocket URL for Home Assistant (default: `ws://localhost:8123/api/websocket`).
 - `DNS_ZONE` (optional): DNS zone to serve (default: `local`).
 - `DNS_PORT` (optional): Port to listen on (default: `53`).
@@ -71,5 +71,5 @@ Run locally (python must be installed) from project folder:
 
 ```bash
 pip install -r requirements.txt
-HA_TOKEN="your_token" python dns_server.py
+HASS_TOKEN="your_token" python dns_server.py
 ```

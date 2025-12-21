@@ -25,7 +25,7 @@ from dns.rdatatype import RdataType
 # Environment variables
 DEBUG = os.getenv("DEBUG", "false").lower() in ("true", "1", "yes")
 HA_URL = os.getenv("HA_URL", "ws://localhost:8123/api/websocket")
-HA_TOKEN = os.getenv("HA_TOKEN", "")
+HASS_TOKEN = os.getenv("HASS_TOKEN", "")
 DNS_ZONE = os.getenv("DNS_ZONE", "local")
 DNS_PORT = int(os.getenv("DNS_PORT", "53"))
 RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))  # Initial reconnection delay in seconds
@@ -988,8 +988,8 @@ async def main():
     """Main entry point."""
     global discovered_hosts
     
-    if not HA_TOKEN:
-        logger.error("HA_TOKEN environment variable is required")
+    if not HASS_TOKEN:
+        logger.error("HASS_TOKEN environment variable is required")
         return
     
     # Load custom hosts first
@@ -1006,7 +1006,7 @@ async def main():
         zone_serial_tracker.update_if_changed(discovered_hosts)
     
     # Create clients
-    ha_client = HomeAssistantClient(HA_URL, HA_TOKEN)
+    ha_client = HomeAssistantClient(HA_URL, HASS_TOKEN)
     dns_server = DNSServer(DNS_ZONE, ha_client, DNS_PORT)
     
     # Log configured DNS zone at startup
