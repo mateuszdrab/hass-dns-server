@@ -4,7 +4,8 @@ WORKDIR /app
 
 # Install Python dependencies (add build deps, install, then remove them)
 COPY requirements.txt ./
-RUN apk add --no-cache --virtual .build-deps build-base libffi-dev openssl-dev \
+RUN apk add --no-cache --virtual .build-deps build-base libffi-dev openssl-dev libcap \
+	&& setcap cap_net_bind_service=+ep $(which python) \
 	&& pip install --no-cache-dir -r requirements.txt \
 	&& apk del .build-deps
 
