@@ -33,6 +33,10 @@ RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))  # Initial reconnection
 MAX_RECONNECT_DELAY = int(os.getenv("MAX_RECONNECT_DELAY", "300"))  # Max delay (5 minutes)
 DNS_TTL = int(os.getenv("DNS_TTL", "300"))  # Default TTL for DNS records (seconds)
 
+# Network bind address — set to a specific local IP to control reply source
+# Example: BIND_ADDRESS=192.168.1.10
+BIND_ADDRESS = os.getenv("BIND_ADDRESS", "0.0.0.0")
+
 # Nameserver configuration (optional)
 DNS_SOA_NS_HOSTNAME = os.getenv("DNS_SOA_NS_HOSTNAME", "")  # Short name (e.g. 'ns') or FQDN (e.g. 'ns.example.com' or 'ns.example.com.')
 # Custom hosts configuration (optional)
@@ -473,17 +477,17 @@ class DNSServer:
         # Start UDP server
         self.udp_server = await loop.create_datagram_endpoint(
             lambda: DNSUDPHandler(self.zone, self.ha_client),
-            local_addr=("0.0.0.0", self.port)
+            local_addr=(BIND_ADDRESS, self.port)
         )
-        logger.info(f"DNS server listening on UDP 0.0.0.0:{self.port} for zone {self.zone}")
+        logger.info(f"DNS server listening on UDP {BIND_ADDRESS}:{self.port} for zone {self.zone}")
         
         # Start TCP server
         self.tcp_server = await asyncio.start_server(
             lambda r, w: DNSTCPHandler(self.zone, self.ha_client).handle_connection(r, w),
-            host="0.0.0.0",
+            host=BIND_ADDRESS,
             port=self.port
         )
-        logger.info(f"DNS server listening on TCP 0.0.0.0:{self.port} for zone {self.zone}")
+        logger.info(f"DNS server listening on TCP {BIND_ADDRESS}:{self.port} for zone {self.zone}")
     
     async def stop(self):
         """Stop the DNS server."""
