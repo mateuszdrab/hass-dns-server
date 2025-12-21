@@ -2,9 +2,11 @@ FROM python:3.11-alpine
 
 WORKDIR /app
 
-# Install Python dependencies first (cache busting avoided by copying requirements)
+# Install Python dependencies (add build deps, install, then remove them)
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apk add --no-cache --virtual .build-deps build-base libffi-dev openssl-dev \
+	&& pip install --no-cache-dir -r requirements.txt \
+	&& apk del .build-deps
 
 # Copy application
 COPY dns_server.py ./
