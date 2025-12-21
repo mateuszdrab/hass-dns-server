@@ -638,6 +638,15 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
                         rrsets = self._get_a_records(qname, hostname_parts, zone_parts, requester_ip)
                     elif qtype == dns.rdatatype.PTR:
                         rrsets = self._get_ptr_records(qname, hostname_parts, zone_parts, requester_ip)
+                    elif qtype == dns.rdatatype.SOA:
+                        # SOA queries should be answered for the zone apex only
+                        host_parts = hostname_parts[:-len(zone_parts)]
+                        if not host_parts:
+                            soa_rrset, ns_rrset, _ = self._create_soa_rrsets(qname)
+                            if soa_rrset:
+                                rrsets.append(soa_rrset)
+                            if ns_rrset:
+                                rrsets.append(ns_rrset)
                     elif qtype == dns.rdatatype.TXT:
                         rrsets = self._get_txt_records(qname, hostname_parts, zone_parts, requester_ip)
                     elif qtype == dns.rdatatype.ANY:
@@ -827,54 +836,21 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
         """Build AXFR (zone transfer) response messages."""
         messages = []
         zone_name = request.question[0].name
-        serial = zone_serial_tracker.update_if_changed(discovered_hosts)
-        
-        # Determine SOA primary nameserver name (mname) and optional NS/A creation
-        # If DNS_SOA_NS_HOSTNAME is provided, use it; otherwise fall back to ns.<zone> for SOA mname.
-        if DNS_SOA_NS_HOSTNAME:
-            # Normalize provided DNS_SOA_NS_HOSTNAME into target (FQDN with trailing dot) and owner text
-            if DNS_SOA_NS_HOSTNAME.endswith('.'):
-                ns_target = DNS_SOA_NS_HOSTNAME
-                ns_owner_text = DNS_SOA_NS_HOSTNAME.rstrip('.')
-            elif '.' in DNS_SOA_NS_HOSTNAME:
-                ns_target = DNS_SOA_NS_HOSTNAME + '.'
-                ns_owner_text = DNS_SOA_NS_HOSTNAME
-            else:
-                ns_target = f"{DNS_SOA_NS_HOSTNAME}.{self.zone}."
-                ns_owner_text = f"{DNS_SOA_NS_HOSTNAME}.{self.zone}"
-
-            soa_mname = ns_target
-        else:
-            soa_mname = f"ns.{self.zone}."
-
-        # Create SOA record
-        soa_rrset = dns.rrset.RRset(zone_name, dns.rdataclass.IN, dns.rdatatype.SOA)
-        soa_rrset.ttl = DNS_TTL
-        soa_rrset.add(dns.rdata.from_text(
-            dns.rdataclass.IN,
-            dns.rdatatype.SOA,
-            f"{soa_mname} admin.{self.zone}. {serial} {DNS_TTL} 1800 604800 86400"
-        ))
+        # Use helper to create SOA and optional NS RRsets
+        soa_rrset, ns_rrset, ns_owner_label = self._create_soa_rrsets(zone_name)
 
         # Start first message with SOA
         response = dns.message.make_response(request)
         response.flags |= dns.flags.AA  # Authoritative answer
         response.answer.append(soa_rrset)
 
-        # If DNS_SOA_NS_HOSTNAME provided, add NS record. Do NOT add an explicit A record
-        # when the corresponding host is present in `discovered_hosts` to avoid
-        # duplicating the same A record later in the AXFR host list.
-        if DNS_SOA_NS_HOSTNAME:
-            ns_rrset = dns.rrset.RRset(zone_name, dns.rdataclass.IN, dns.rdatatype.NS)
-            ns_rrset.ttl = DNS_TTL
-            ns_rrset.add(dns.rdata.from_text(dns.rdataclass.IN, dns.rdatatype.NS, ns_target))
+        if ns_rrset:
             response.answer.append(ns_rrset)
-
-            host_label = ns_owner_text.split('.')[0].lower()
-            if host_label in discovered_hosts and discovered_hosts.get(host_label):
-                logger.debug(f"Host entries exist for DNS_SOA_NS_HOSTNAME '{DNS_SOA_NS_HOSTNAME}'; skipping explicit NS A record to avoid duplicate")
-            else:
-                logger.debug(f"No host entries found for DNS_SOA_NS_HOSTNAME '{DNS_SOA_NS_HOSTNAME}'; no NS A record will be created")
+            if ns_owner_label:
+                if ns_owner_label in discovered_hosts and discovered_hosts.get(ns_owner_label):
+                    logger.debug(f"Host entries exist for DNS_SOA_NS_HOSTNAME '{DNS_SOA_NS_HOSTNAME}'; skipping explicit NS A record to avoid duplicate")
+                else:
+                    logger.debug(f"No host entries found for DNS_SOA_NS_HOSTNAME '{DNS_SOA_NS_HOSTNAME}'; no NS A record will be created")
 
         messages.append(response)
         
@@ -954,6 +930,50 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
         messages.append(final_response)
         
         return messages
+
+    def _create_soa_rrsets(self, zone_name: dns.name.Name) -> Tuple[dns.rrset.RRset, dns.rrset.RRset, str]:
+        """Create SOA RRset and optional NS RRset for the zone.
+
+        Returns a tuple: (soa_rrset, ns_rrset_or_None, ns_owner_label_or_empty).
+        """
+        serial = zone_serial_tracker.update_if_changed(discovered_hosts)
+
+        # Determine SOA primary nameserver name (mname)
+        if DNS_SOA_NS_HOSTNAME:
+            if DNS_SOA_NS_HOSTNAME.endswith('.'):
+                ns_target = DNS_SOA_NS_HOSTNAME
+                ns_owner_text = DNS_SOA_NS_HOSTNAME.rstrip('.')
+            elif '.' in DNS_SOA_NS_HOSTNAME:
+                ns_target = DNS_SOA_NS_HOSTNAME + '.'
+                ns_owner_text = DNS_SOA_NS_HOSTNAME
+            else:
+                ns_target = f"{DNS_SOA_NS_HOSTNAME}.{self.zone}."
+                ns_owner_text = f"{DNS_SOA_NS_HOSTNAME}.{self.zone}"
+
+            soa_mname = ns_target
+        else:
+            soa_mname = f"ns.{self.zone}."
+            ns_target = None
+            ns_owner_text = ''
+
+        # Create SOA record
+        soa_rrset = dns.rrset.RRset(zone_name, dns.rdataclass.IN, dns.rdatatype.SOA)
+        soa_rrset.ttl = DNS_TTL
+        soa_rrset.add(dns.rdata.from_text(
+            dns.rdataclass.IN,
+            dns.rdatatype.SOA,
+            f"{soa_mname} admin.{self.zone}. {serial} {DNS_TTL} 1800 604800 86400"
+        ))
+
+        ns_rrset = None
+        ns_owner_label = ''
+        if ns_target:
+            ns_rrset = dns.rrset.RRset(zone_name, dns.rdataclass.IN, dns.rdatatype.NS)
+            ns_rrset.ttl = DNS_TTL
+            ns_rrset.add(dns.rdata.from_text(dns.rdataclass.IN, dns.rdatatype.NS, ns_target))
+            ns_owner_label = ns_owner_text.split('.')[0].lower() if ns_owner_text else ''
+
+        return soa_rrset, ns_rrset, ns_owner_label
 
 
 class DNSTCPHandler:
