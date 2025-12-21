@@ -33,7 +33,7 @@ MAX_RECONNECT_DELAY = int(os.getenv("MAX_RECONNECT_DELAY", "300"))  # Max delay 
 DNS_TTL = int(os.getenv("DNS_TTL", "300"))  # Default TTL for DNS records (seconds)
 
 # Nameserver configuration (optional)
-NS_HOSTNAME = os.getenv("NS_HOSTNAME", "")  # Short name (e.g. 'ns') or FQDN (e.g. 'ns.example.com' or 'ns.example.com.')
+DNS_SOA_NS_HOSTNAME = os.getenv("DNS_SOA_NS_HOSTNAME", "")  # Short name (e.g. 'ns') or FQDN (e.g. 'ns.example.com' or 'ns.example.com.')
 # Custom hosts configuration (optional)
 CUSTOM_HOSTS_FILE = os.getenv("CUSTOM_HOSTS_FILE", "")  # Path to JSON file with custom hosts
 CUSTOM_HOSTS_JSON = os.getenv("CUSTOM_HOSTS_JSON", "")  # Direct JSON string with custom hosts
@@ -774,18 +774,18 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
         serial = zone_serial_tracker.update_if_changed(discovered_hosts)
         
         # Determine SOA primary nameserver name (mname) and optional NS/A creation
-        # If NS_HOSTNAME is provided, use it; otherwise fall back to ns.<zone> for SOA mname.
-        if NS_HOSTNAME:
-            # Normalize provided NS_HOSTNAME into target (FQDN with trailing dot) and owner text
-            if NS_HOSTNAME.endswith('.'):
-                ns_target = NS_HOSTNAME
-                ns_owner_text = NS_HOSTNAME.rstrip('.')
-            elif '.' in NS_HOSTNAME:
-                ns_target = NS_HOSTNAME + '.'
-                ns_owner_text = NS_HOSTNAME
+        # If DNS_SOA_NS_HOSTNAME is provided, use it; otherwise fall back to ns.<zone> for SOA mname.
+        if DNS_SOA_NS_HOSTNAME:
+            # Normalize provided DNS_SOA_NS_HOSTNAME into target (FQDN with trailing dot) and owner text
+            if DNS_SOA_NS_HOSTNAME.endswith('.'):
+                ns_target = DNS_SOA_NS_HOSTNAME
+                ns_owner_text = DNS_SOA_NS_HOSTNAME.rstrip('.')
+            elif '.' in DNS_SOA_NS_HOSTNAME:
+                ns_target = DNS_SOA_NS_HOSTNAME + '.'
+                ns_owner_text = DNS_SOA_NS_HOSTNAME
             else:
-                ns_target = f"{NS_HOSTNAME}.{self.zone}."
-                ns_owner_text = f"{NS_HOSTNAME}.{self.zone}"
+                ns_target = f"{DNS_SOA_NS_HOSTNAME}.{self.zone}."
+                ns_owner_text = f"{DNS_SOA_NS_HOSTNAME}.{self.zone}"
 
             soa_mname = ns_target
         else:
@@ -805,10 +805,10 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
         response.flags |= dns.flags.AA  # Authoritative answer
         response.answer.append(soa_rrset)
 
-        # If NS_HOSTNAME provided, add NS record. Do NOT add an explicit A record
+        # If DNS_SOA_NS_HOSTNAME provided, add NS record. Do NOT add an explicit A record
         # when the corresponding host is present in `discovered_hosts` to avoid
         # duplicating the same A record later in the AXFR host list.
-        if NS_HOSTNAME:
+        if DNS_SOA_NS_HOSTNAME:
             ns_rrset = dns.rrset.RRset(zone_name, dns.rdataclass.IN, dns.rdatatype.NS)
             ns_rrset.ttl = DNS_TTL
             ns_rrset.add(dns.rdata.from_text(dns.rdataclass.IN, dns.rdatatype.NS, ns_target))
@@ -816,9 +816,9 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
 
             host_label = ns_owner_text.split('.')[0].lower()
             if host_label in discovered_hosts and discovered_hosts.get(host_label):
-                logger.debug(f"Host entries exist for NS_HOSTNAME '{NS_HOSTNAME}'; skipping explicit NS A record to avoid duplicate")
+                logger.debug(f"Host entries exist for DNS_SOA_NS_HOSTNAME '{DNS_SOA_NS_HOSTNAME}'; skipping explicit NS A record to avoid duplicate")
             else:
-                logger.debug(f"No host entries found for NS_HOSTNAME '{NS_HOSTNAME}'; no NS A record will be created")
+                logger.debug(f"No host entries found for DNS_SOA_NS_HOSTNAME '{DNS_SOA_NS_HOSTNAME}'; no NS A record will be created")
 
         messages.append(response)
         

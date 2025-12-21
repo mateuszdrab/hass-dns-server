@@ -57,10 +57,10 @@ docker run -d --network host -e HASS_TOKEN="..." --name hass-dns-server hass-dns
 - `DNS_TTL` (optional): Default TTL for DNS records in seconds (default: `300`)
 - `DEBUG` (optional): `true` or `false` to enable debug logging.
 - `CUSTOM_HOSTS_FILE` / `CUSTOM_HOSTS_JSON` (optional): Inject extra host records. Example: `[{"hostname":"modem","ip_address":"192.168.0.1"}]`
-- `NS_HOSTNAME` (optional): Sets the nameserver hostname used in the SOA `mname` and NS records. Accepts a short
+- `DNS_SOA_NS_HOSTNAME` (optional): Sets the nameserver hostname used in the SOA `mname` and NS records. Accepts a short
   name (e.g. `ns`) or a fully-qualified domain name (e.g. `ns.example.com` or `ns.example.com.`). If a short name is
-  provided it will be expanded to `<short>.<DNS_ZONE>` (for example, `NS_HOSTNAME=ns` with `DNS_ZONE=local` becomes
-  `ns.local.`). When `NS_HOSTNAME` matches a discovered or custom host, the server will rely on that host's A record
+  provided it will be expanded to `<short>.<DNS_ZONE>` (for example, `DNS_SOA_NS_HOSTNAME=ns` with `DNS_ZONE=local` becomes
+  `ns.local.`). When `DNS_SOA_NS_HOSTNAME` matches a discovered or custom host, the server will rely on that host's A record
   for the NS (no duplicate NS A record is added). If it does not match an existing host, only the NS record will be
   present in the zone (no automatic A record is created).
 - `SOURCE_PREFIX`, `DEST_PREFIX` (optional): Prefix translation for forward and reverse DNS queries.
