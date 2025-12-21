@@ -24,7 +24,7 @@ from dns.rdatatype import RdataType
 
 # Environment variables
 DEBUG = os.getenv("DEBUG", "false").lower() in ("true", "1", "yes")
-HA_URL = os.getenv("HA_URL", "ws://localhost:8123/api/websocket")
+HASS_URL = os.getenv("HASS_URL", "ws://localhost:8123/api/websocket")
 HASS_TOKEN = os.getenv("HASS_TOKEN", "")
 DNS_ZONE = os.getenv("DNS_ZONE", "local")
 DNS_PORT = int(os.getenv("DNS_PORT", "53"))
@@ -1006,7 +1006,7 @@ async def main():
         zone_serial_tracker.update_if_changed(discovered_hosts)
     
     # Create clients
-    ha_client = HomeAssistantClient(HA_URL, HASS_TOKEN)
+    ha_client = HomeAssistantClient(HASS_URL, HASS_TOKEN)
     dns_server = DNSServer(DNS_ZONE, ha_client, DNS_PORT)
     
     # Log configured DNS zone at startup
