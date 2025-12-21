@@ -39,16 +39,11 @@ CUSTOM_HOSTS_FILE = os.getenv("CUSTOM_HOSTS_FILE", "")  # Path to JSON file with
 CUSTOM_HOSTS_JSON = os.getenv("CUSTOM_HOSTS_JSON", "")  # Direct JSON string with custom hosts
 
 # Configure logging
-if DEBUG:
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-else:
-    logging.basicConfig(
-        level=logging.CRITICAL + 1,  # Suppress all logs
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+
+logging.basicConfig(
+    level=logging.DEBUG if DEBUG else logging.CRITICAL + 1,  # Suppress all logs
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+
 logger = logging.getLogger(__name__)
 
 # Network prefix translation (optional)
