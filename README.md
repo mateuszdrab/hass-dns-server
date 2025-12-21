@@ -68,6 +68,11 @@ docker run -d --network host -e HASS_TOKEN="..." --name hass-dns-server hass-dns
   that restrict which requester IPs will have A-record translations applied. If empty, any
   requester will receive translated addresses when `SOURCE_PREFIX` and `DEST_PREFIX` are set.
   Example: `TRANSLATION_ALLOWED_CIDRS=10.0.0.0/8,192.168.69.0/24`.
+ - `BIND_ADDRESS` (optional): Local IP address to bind UDP/TCP sockets on. Default: `0.0.0.0`.
+   Set this to a specific local IP to make replies originate from that address (helps
+   when you want deterministic source IPs on multi-homed hosts).
+ - `REFRESH_INTERVAL` (optional): Minimum seconds between DHCP refresh requests to Home
+   Assistant (default: `60`).
 
 ## Development / Quick test
 

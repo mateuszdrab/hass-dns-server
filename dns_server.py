@@ -24,13 +24,20 @@ import dns.rrset
 from dns.rdatatype import RdataType
 
 # Environment variables
+# DEBUG: enable verbose logging when true/1/yes (default: false)
 DEBUG = os.getenv("DEBUG", "false").lower() in ("true", "1", "yes")
+# HASS_URL: Home Assistant WebSocket URL for the API (default: ws://localhost:8123/api/websocket)
 HASS_URL = os.getenv("HASS_URL", "ws://localhost:8123/api/websocket")
+# HASS_TOKEN: Home Assistant long-lived access token (required for operation)
 HASS_TOKEN = os.getenv("HASS_TOKEN", "")
+# DNS_ZONE: DNS zone served by this process (no trailing dot). Example: 'local' or 'example.com'
 DNS_ZONE = os.getenv("DNS_ZONE", "local")
+# DNS_PORT: UDP/TCP port to bind for DNS (default: 53)
 DNS_PORT = int(os.getenv("DNS_PORT", "53"))
+# RECONNECT_DELAY / MAX_RECONNECT_DELAY: initial and maximum backoff (seconds) when reconnecting to HA
 RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))  # Initial reconnection delay in seconds
 MAX_RECONNECT_DELAY = int(os.getenv("MAX_RECONNECT_DELAY", "300"))  # Max delay (5 minutes)
+# DNS_TTL: default TTL in seconds for served DNS records
 DNS_TTL = int(os.getenv("DNS_TTL", "300"))  # Default TTL for DNS records (seconds)
 
 # Network bind address — set to a specific local IP to control reply source
