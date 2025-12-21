@@ -64,6 +64,10 @@ docker run -d --network host -e HASS_TOKEN="..." --name hass-dns-server hass-dns
   for the NS (no duplicate NS A record is added). If it does not match an existing host, only the NS record will be
   present in the zone (no automatic A record is created).
 - `SOURCE_PREFIX`, `DEST_PREFIX` (optional): Prefix translation for forward and reverse DNS queries.
+- `TRANSLATION_ALLOWED_CIDRS` (optional): Comma-separated list of CIDR ranges (IPv4 or IPv6)
+  that restrict which requester IPs will have A-record translations applied. If empty, any
+  requester will receive translated addresses when `SOURCE_PREFIX` and `DEST_PREFIX` are set.
+  Example: `TRANSLATION_ALLOWED_CIDRS=10.0.0.0/8,192.168.69.0/24`.
 
 ## Development / Quick test
 

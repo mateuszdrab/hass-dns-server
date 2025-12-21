@@ -14,6 +14,7 @@ import signal
 import hashlib
 
 import aiohttp
+import ipaddress
 import dns.name
 import dns.message
 import dns.rdatatype
@@ -43,6 +44,7 @@ CUSTOM_HOSTS_JSON = os.getenv("CUSTOM_HOSTS_JSON", "")  # Direct JSON string wit
 logging.basicConfig(
     level=logging.DEBUG if DEBUG else logging.CRITICAL + 1,  # Suppress all logs
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,27 @@ logger = logging.getLogger(__name__)
 # Example: SOURCE_PREFIX=192.168.0 DEST_PREFIX=192.168.69 translates 192.168.0.x to 192.168.69.x
 SOURCE_PREFIX = os.getenv("SOURCE_PREFIX", "")
 DEST_PREFIX = os.getenv("DEST_PREFIX", "")
+
+# Optional CIDR list (comma-separated) which restricts translation to requests
+# coming from addresses inside these networks. If empty, translation applies
+# to all requesters when SOURCE_PREFIX and DEST_PREFIX are set.
+TRANSLATION_ALLOWED_CIDRS = os.getenv("TRANSLATION_ALLOWED_CIDRS", "")
+# Parse into list of ipaddress.IPv4Network/IPv6Network objects
+TRANSLATION_ALLOWED_NETWORKS = []
+if TRANSLATION_ALLOWED_CIDRS:
+    for part in [p.strip() for p in TRANSLATION_ALLOWED_CIDRS.split(',') if p.strip()]:
+        try:
+            TRANSLATION_ALLOWED_NETWORKS.append(ipaddress.ip_network(part, strict=False))
+        except Exception:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Invalid TRANSLATION_ALLOWED_CIDRS entry ignored: {part}")
+
+# Notes:
+# - `TRANSLATION_ALLOWED_CIDRS` should be a comma-separated list of networks in CIDR
+#   notation. Either IPv4 (e.g. `192.168.69.0/24`) or IPv6 (e.g. `fd00::/8`) are accepted.
+# - When provided, forward A-record translations (SOURCE_PREFIX -> DEST_PREFIX) will only
+#   be applied when the requester IP (the client making the DNS query) is contained in at
+#   least one of the given networks. Reverse PTR translation is not gated by this setting.
 
 # Global storage for discovered hosts (hostname -> list of host records)
 discovered_hosts: Dict[str, List[Dict]] = {}
@@ -481,12 +504,32 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
         self.ha_client = ha_client
         self.transport = None
         self.translation_enabled = bool(SOURCE_PREFIX and DEST_PREFIX)
+        # If TRANSLATION_ALLOWED_NETWORKS is non-empty, only translate for
+        # requesters whose IP is inside one of these networks.
+        self.translation_allowed_networks = TRANSLATION_ALLOWED_NETWORKS
         if self.translation_enabled:
             logger.info(f"Network prefix translation enabled: {SOURCE_PREFIX} -> {DEST_PREFIX}")
     
-    def translate_ip_forward(self, ip: str) -> str:
+    def _requester_allows_translation(self, requester_ip: str) -> bool:
+        """Return True if translation is allowed for the requester IP."""
+        if not self.translation_enabled:
+            return False
+        if not self.translation_allowed_networks:
+            return True
+        try:
+            addr = ipaddress.ip_address(requester_ip)
+        except Exception:
+            return False
+        for net in self.translation_allowed_networks:
+            if addr in net:
+                return True
+        return False
+
+    def translate_ip_forward(self, ip: str, requester_ip: str = None) -> str:
         """Translate IP from source prefix to destination prefix (for A records)."""
         if not self.translation_enabled:
+            return ip
+        if requester_ip and not self._requester_allows_translation(requester_ip):
             return ip
         if ip.startswith(SOURCE_PREFIX + "."):
             # Replace the source prefix with destination prefix
@@ -499,6 +542,7 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
         """Translate IP from destination prefix to source prefix (for PTR lookups)."""
         if not self.translation_enabled:
             return ip
+        # reverse translation does not depend on requester IP
         if ip.startswith(DEST_PREFIX + "."):
             # Replace the destination prefix with source prefix
             translated = SOURCE_PREFIX + ip[len(DEST_PREFIX):]
@@ -523,8 +567,9 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
                 q = request.question[0]
                 logger.info(f"DNS query from {addr}: name={q.name}, type={dns.rdatatype.to_text(q.rdtype)}")
 
-            # Build response
-            response = self._build_response(request)
+            # Build response — pass requester IP for translation decisions
+            requester_ip = addr[0]
+            response = self._build_response(request, requester_ip)
             
             # Send response
             self.transport.sendto(response.to_wire(), addr)
@@ -532,7 +577,7 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
         except Exception as e:
             logger.error(f"Error processing DNS query from {addr}: {e}")
     
-    def _build_response(self, request: dns.message.Message) -> dns.message.Message:
+    def _build_response(self, request: dns.message.Message, requester_ip: str = None) -> dns.message.Message:
         """Build a DNS response for the given request."""
         response = dns.message.make_response(request)
         response.flags |= dns.flags.AA  # Authoritative answer
@@ -543,15 +588,15 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
             
             # Get the hostname and record type requested
             hostname_parts = str(qname).rstrip('.').split('.')
-            
-            rrsets = self._get_rrsets(qname, qtype, hostname_parts)
+
+            rrsets = self._get_rrsets(qname, qtype, hostname_parts, requester_ip)
             for rrset in rrsets:
                 response.answer.append(rrset)
         
         return response
     
     def _get_rrsets(self, qname: dns.name.Name, qtype: RdataType, 
-                    hostname_parts: List[str]) -> List[dns.rrset.RRset]:
+                    hostname_parts: List[str], requester_ip: str = None) -> List[dns.rrset.RRset]:
         """Get RRsets for the query."""
         rrsets = []
         
@@ -564,7 +609,7 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
         # Rewrite internally to reverse lookup semantics and answer under the original name.
         if qtype in (dns.rdatatype.PTR, dns.rdatatype.ANY) and not is_reverse_v4:
             if self._is_plain_ipv4(hostname_parts):
-                rrsets.extend(self._get_ptr_records_for_dotted_ip(qname, hostname_parts))
+                rrsets.extend(self._get_ptr_records_for_dotted_ip(qname, hostname_parts, requester_ip))
                 # For ANY, continue to also include other potential records (none expected here)
                 return rrsets
 
@@ -579,15 +624,15 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
                 if hostname_parts[-len(zone_parts):] == zone_parts:
                     # Handle different record types
                     if qtype == dns.rdatatype.A:
-                        rrsets = self._get_a_records(qname, hostname_parts, zone_parts)
+                        rrsets = self._get_a_records(qname, hostname_parts, zone_parts, requester_ip)
                     elif qtype == dns.rdatatype.PTR:
-                        rrsets = self._get_ptr_records(qname, hostname_parts, zone_parts)
+                        rrsets = self._get_ptr_records(qname, hostname_parts, zone_parts, requester_ip)
                     elif qtype == dns.rdatatype.TXT:
-                        rrsets = self._get_txt_records(qname, hostname_parts, zone_parts)
+                        rrsets = self._get_txt_records(qname, hostname_parts, zone_parts, requester_ip)
                     elif qtype == dns.rdatatype.ANY:
-                        rrsets.extend(self._get_a_records(qname, hostname_parts, zone_parts))
-                        rrsets.extend(self._get_ptr_records(qname, hostname_parts, zone_parts))
-                        rrsets.extend(self._get_txt_records(qname, hostname_parts, zone_parts))
+                        rrsets.extend(self._get_a_records(qname, hostname_parts, zone_parts, requester_ip))
+                        rrsets.extend(self._get_ptr_records(qname, hostname_parts, zone_parts, requester_ip))
+                        rrsets.extend(self._get_txt_records(qname, hostname_parts, zone_parts, requester_ip))
         
         return rrsets
 
@@ -606,7 +651,7 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
                 return False
         return True
 
-    def _get_ptr_records_for_dotted_ip(self, qname: dns.name.Name, hostname_parts: List[str]) -> List[dns.rrset.RRset]:
+    def _get_ptr_records_for_dotted_ip(self, qname: dns.name.Name, hostname_parts: List[str], requester_ip: str = None) -> List[dns.rrset.RRset]:
         """Handle PTR lookups where the query name is a plain dotted IPv4 (e.g., 192.168.67.1)."""
         rrsets: List[dns.rrset.RRset] = []
         # Build dotted IP
@@ -639,7 +684,7 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
         return rrsets
     
     def _get_a_records(self, qname: dns.name.Name, hostname_parts: List[str],
-                       zone_parts: List[str]) -> List[dns.rrset.RRset]:
+                       zone_parts: List[str], requester_ip: str = None) -> List[dns.rrset.RRset]:
         """Get A records for the query."""
         rrsets = []
         
@@ -660,7 +705,7 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
 
                 for entry in host_entries:
                     ip = entry["ip_address"]
-                    translated_ip = self.translate_ip_forward(ip)
+                    translated_ip = self.translate_ip_forward(ip, requester_ip)
 
                     if translated_ip in seen_ips:
                         continue
@@ -674,7 +719,7 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
         return rrsets
     
     def _get_ptr_records(self, qname: dns.name.Name, hostname_parts: List[str],
-                        zone_parts: List[str]) -> List[dns.rrset.RRset]:
+                        zone_parts: List[str], requester_ip: str = None) -> List[dns.rrset.RRset]:
         """Get PTR records for the query."""
         rrsets = []
         
@@ -729,7 +774,7 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
         return rrsets
     
     def _get_txt_records(self, qname: dns.name.Name, hostname_parts: List[str],
-                        zone_parts: List[str]) -> List[dns.rrset.RRset]:
+                        zone_parts: List[str], requester_ip: str = None) -> List[dns.rrset.RRset]:
         """Get TXT records for MAC addresses."""
         rrsets = []
         
@@ -750,7 +795,7 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
                     if not mac or not ip:
                         continue
 
-                    translated_ip = self.translate_ip_forward(ip)
+                    translated_ip = self.translate_ip_forward(ip, requester_ip)
                     pair = (translated_ip, mac)
                     if pair in seen_pairs:
                         continue
@@ -767,7 +812,7 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
         
         return rrsets
     
-    def _build_axfr_response(self, request: dns.message.Message) -> List[dns.message.Message]:
+    def _build_axfr_response(self, request: dns.message.Message, requester_ip: str = None) -> List[dns.message.Message]:
         """Build AXFR (zone transfer) response messages."""
         messages = []
         zone_name = request.question[0].name
@@ -843,7 +888,7 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
             seen_ips = set()
             for entry in entries:
                 ip = entry["ip_address"]
-                translated_ip = self.translate_ip_forward(ip)
+                translated_ip = self.translate_ip_forward(ip, requester_ip)
                 if translated_ip not in seen_ips:
                     seen_ips.add(translated_ip)
                     a_rrset.add(dns.rdata.from_text(dns.rdataclass.IN, dns.rdatatype.A, translated_ip))
@@ -864,7 +909,7 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
                 if not mac or not ip:
                     continue
 
-                translated_ip = self.translate_ip_forward(ip)
+                translated_ip = self.translate_ip_forward(ip, requester_ip)
                 pair = (translated_ip, mac)
                 if pair in seen_pairs:
                     continue
@@ -907,12 +952,29 @@ class DNSTCPHandler:
         self.zone = zone
         self.ha_client = ha_client
         self.translation_enabled = bool(SOURCE_PREFIX and DEST_PREFIX)
+        self.translation_allowed_networks = TRANSLATION_ALLOWED_NETWORKS
         if self.translation_enabled:
             logger.debug(f"TCP handler: Network prefix translation enabled: {SOURCE_PREFIX} -> {DEST_PREFIX}")
     
-    def translate_ip_forward(self, ip: str) -> str:
+    def _requester_allows_translation(self, requester_ip: str) -> bool:
+        if not self.translation_enabled:
+            return False
+        if not self.translation_allowed_networks:
+            return True
+        try:
+            addr = ipaddress.ip_address(requester_ip)
+        except Exception:
+            return False
+        for net in self.translation_allowed_networks:
+            if addr in net:
+                return True
+        return False
+
+    def translate_ip_forward(self, ip: str, requester_ip: str = None) -> str:
         """Translate IP from source prefix to destination prefix (for A records)."""
         if not self.translation_enabled:
+            return ip
+        if requester_ip and not self._requester_allows_translation(requester_ip):
             return ip
         if ip.startswith(SOURCE_PREFIX + "."):
             translated = DEST_PREFIX + ip[len(SOURCE_PREFIX):]
@@ -943,13 +1005,17 @@ class DNSTCPHandler:
                 logger.info(f"TCP DNS query from {addr}: name={q.name}, type={dns.rdatatype.to_text(q.rdtype)}")
             
             # Check if this is an AXFR request
+            requester_ip = None
+            if isinstance(addr, tuple):
+                requester_ip = addr[0]
+
             if request.question and request.question[0].rdtype == dns.rdatatype.AXFR:
                 # Handle zone transfer
                 logger.info(f"AXFR request from {addr} for zone {request.question[0].name}")
                 
                 # Create DNS protocol instance to reuse methods
                 protocol = DNSUDPHandler(self.zone, self.ha_client)
-                messages = protocol._build_axfr_response(request)
+                messages = protocol._build_axfr_response(request, requester_ip)
                 
                 # Send all messages
                 for msg in messages:
@@ -962,7 +1028,7 @@ class DNSTCPHandler:
             else:
                 # Handle regular query
                 protocol = DNSUDPHandler(self.zone, self.ha_client)
-                response = protocol._build_response(request)
+                response = protocol._build_response(request, requester_ip)
                 
                 # Send response with length prefix
                 response_data = response.to_wire()
