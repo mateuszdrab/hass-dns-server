@@ -913,7 +913,7 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
                         dns.rdata.from_text(
                             dns.rdataclass.IN,
                             dns.rdatatype.TXT,
-                            f'"{translated_ip}={mac}"',
+                            f'"mac={mac},ip={translated_ip}"',
                         )
                     )
 
@@ -1005,7 +1005,9 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
                 seen_pairs.add(pair)
                 txt_rrset.add(
                     dns.rdata.from_text(
-                        dns.rdataclass.IN, dns.rdatatype.TXT, f'"{translated_ip}={mac}"'
+                        dns.rdataclass.IN,
+                        dns.rdatatype.TXT,
+                        f'"mac={mac},ip={translated_ip}"',
                     )
                 )
 
