@@ -800,9 +800,9 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
         
         host_parts = hostname_parts[:-len(zone_parts)]
         
-        if len(host_parts) >= 2 and host_parts[0].lower() == "_mac":
-            # _mac.hostname.zone format
-            hostname = host_parts[1].lower()
+        if len(host_parts) >= 1:
+            # hostname.zone format - return MAC at hostname directly
+            hostname = host_parts[0].lower()
             
             if hostname in discovered_hosts and discovered_hosts[hostname]:
                 rrset = dns.rrset.RRset(qname, dns.rdataclass.IN, dns.rdatatype.TXT)
@@ -884,9 +884,8 @@ class DNSUDPHandler(asyncio.DatagramProtocol):
                 current_response.answer.append(a_rrset)
                 records_in_current += 1
             
-            # Add TXT records with IP-to-MAC mapping
-            mac_fqdn = dns.name.from_text(f"_mac.{hostname}.{self.zone}")
-            txt_rrset = dns.rrset.RRset(mac_fqdn, dns.rdataclass.IN, dns.rdatatype.TXT)
+            # Add TXT records with IP-to-MAC mapping at hostname directly
+            txt_rrset = dns.rrset.RRset(fqdn, dns.rdataclass.IN, dns.rdatatype.TXT)
             txt_rrset.ttl = DNS_TTL
             seen_pairs = set()
 
